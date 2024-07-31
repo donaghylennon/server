@@ -63,7 +63,6 @@ HttpRequest *parse_from_request_line(const char *buffer, size_t buflen) {
     while (isalpha(buffer[i]) && i < buflen && m < 7)
         method_text[m++] = buffer[i++];
     method_text[m] = '\0';
-    fprintf(stderr, "method text: %s\n", method_text);
     if (!iswspace(buffer[i]))
         return NULL;
     while (iswspace(buffer[i]) && i < buflen)
@@ -71,7 +70,6 @@ HttpRequest *parse_from_request_line(const char *buffer, size_t buflen) {
     char path[200];
     size_t p = 0;
     while (!iswspace(buffer[i]) && i < buflen) {
-        fprintf(stderr, "buffer[i]: %c\n", buffer[i]);
         path[p++] = buffer[i++];
     }
     path[p] = '\0';
@@ -129,4 +127,46 @@ HttpRequest *try_parse_http_request(const char *buffer) {
         }
     }
     return NULL;
+}
+
+
+HttpResponse *create_http_response(char version[4], char code[4], char reason[200]) {
+    HttpResponse *hr = (HttpResponse *)malloc(sizeof(HttpResponse));
+    strcpy(hr->version, version);
+    strcpy(hr->code, code);
+    strcpy(hr->reason, reason);
+    return hr;
+}
+
+void destroy_http_response(HttpResponse *hr) {
+    if (hr)
+        free(hr);
+}
+
+void http_response_add_header(HttpResponse *hr, const char *key, const char *value) {
+    if (!hr->headers)
+        hr->headers = hashtable_create();
+    hashtable_put(hr->headers, key, value);
+}
+
+const char *generate_response_text(HttpResponse *hr) {
+    char *text = (char *)malloc(2000*sizeof(char));
+    char *p = text;
+    strncpy(p, "HTTP/", 5);
+    p+=5;
+    strncpy(p, hr->version, strlen(hr->version));
+    p+=strlen(hr->version);
+    strncpy(p, " ", 1);
+    p+=1;
+    strncpy(p, hr->code, strlen(hr->code));
+    p+=strlen(hr->code);
+    strncpy(p, " ", 1);
+    p+=1;
+    strncpy(p, hr->reason, strlen(hr->reason));
+    p+=strlen(hr->reason);
+    strncpy(p, "\r\n\r\n", 4);
+    p+=4;
+    strncpy(p, "\0",1);
+
+    return text;
 }
