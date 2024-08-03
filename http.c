@@ -16,6 +16,7 @@ HttpRequest *create_http_request(HttpMethod method, char version[3], const char 
     hr->method = method;
     strcpy(hr->version, version);
     strcpy(hr->path, path);
+    hr->headers = NULL;
     return hr;
 }
 
@@ -100,7 +101,7 @@ void parse_headers_into(HttpRequest *hr, const char *buffer) {
         p += 2;
         if (*p == '\0')
             break;
-        char line_copy[200];
+        char line_copy[400];
         const char *end_of_line = strstr(p, "\r\n");
         ptrdiff_t line_len = end_of_line - p;
         strncpy(line_copy, p, line_len);
@@ -130,23 +131,37 @@ HttpRequest *try_parse_http_request(const char *buffer) {
 }
 
 
-HttpResponse *create_http_response(char version[4], char code[4], char reason[200]) {
+HttpResponse *create_http_response(char version[4], char code[4], char *reason) {
     HttpResponse *hr = (HttpResponse *)malloc(sizeof(HttpResponse));
     strcpy(hr->version, version);
     strcpy(hr->code, code);
     strcpy(hr->reason, reason);
+    hr->headers = NULL;
+    hr->body = NULL;
     return hr;
 }
 
 void destroy_http_response(HttpResponse *hr) {
-    if (hr)
+    if (hr) {
+        if (hr->body)
+            free(hr->body);
         free(hr);
+    }
 }
 
 void http_response_add_header(HttpResponse *hr, const char *key, const char *value) {
     if (!hr->headers)
         hr->headers = hashtable_create();
     hashtable_put(hr->headers, key, value);
+}
+
+void http_response_add_body(HttpResponse *hr, const char *text) {
+    size_t text_size = strlen(text);
+    hr->body = (char *)malloc(text_size*sizeof(char));
+    strcpy(hr->body, text);
+    char lenbuf[20];
+    snprintf(lenbuf, 20, "%lu", text_size);
+    http_response_add_header(hr, "Content-Length", lenbuf);
 }
 
 const char *generate_response_text(HttpResponse *hr) {
@@ -164,8 +179,21 @@ const char *generate_response_text(HttpResponse *hr) {
     p+=1;
     strncpy(p, hr->reason, strlen(hr->reason));
     p+=strlen(hr->reason);
+    strncpy(p, "\r\n", 2);
+    p+=2;
+    if (hr->headers) {
+        strncpy(p, "Content-Length: ", 16);
+        p+=16;
+        const char *contlen = hashtable_get(hr->headers, "Content-Length");
+        strncpy(p, contlen, strlen(contlen));
+        p+=strlen(contlen);
+    }
     strncpy(p, "\r\n\r\n", 4);
     p+=4;
+    if (hr->body) {
+        strncpy(p, hr->body, strlen(hr->body));
+        p+=strlen(hr->body);
+    }
     strncpy(p, "\0",1);
 
     return text;

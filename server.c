@@ -30,40 +30,11 @@ void server_run(unsigned short port) {
         }
         fprintf(stdout, "Successful connection to %s\n", inet_ntoa(client_address.sin_addr));
 
-        // For now, just assume one receive call gets everything and print it
-        // Then send a "Not Implemented" response
-        char rcbuf[1500];
-        int rcvd = recv(connfd, rcbuf, 1500, 0);
-        rcbuf[rcvd] = '\0';
-        puts("Received:\n"); puts(rcbuf); puts("\n");
-        fflush(stdout);
-
-        HttpRequest *hr = try_parse_http_request(rcbuf);
-        for (size_t i = 0; i < handler_count; i++) {
-            if (!strcmp(handlers[i].path, hr->path)) {
-                handlers[i].handler(hr->path);
-            }
-        }
-        char reason[200] = "Not Implemented";
-        HttpResponse *hrs = create_http_response("1.1", "501", reason);
-        printf("Res: %s\n", generate_response_text(hrs));
-
-        const char *buf = generate_response_text(hrs);
-        int buflen = strlen(buf);
-        int sentlen = 0;
-        while (sentlen < buflen) {
-            int sent = send(connfd, buf, buflen, MSG_NOSIGNAL);
-            if (sent == -1) {
-                fprintf(stderr, "Error sending data\n");
-                perror("server");
-                fflush(stdout);
-                break;
-            }
-            sentlen += sent;
-            printf("sent total %i\n", sentlen);
-            fflush(stdout);
-        }
-        break;
+        HttpRequest *hr = server_receive_request(connfd);
+        HttpResponse *hrs = server_handle_request(hr);
+        const char *response = generate_response_text(hrs);
+        server_send_response(connfd, response);
+        close(connfd);
     }
 }
 
@@ -93,12 +64,14 @@ int server_listen(unsigned short port) {
     return fd;
 }
 
-int server_receive_message(int fd, char * buffer, size_t buflen) {
-//server recv request
+HttpRequest *server_receive_request(int fd) {
+    size_t buflen = 1500;
+    char buffer[buflen];
     ssize_t rcount = 0;
     ssize_t total_received = 0;
-    int flags = MSG_DONTWAIT;
+    int flags = 0;
     bool stop = false;
+    HttpRequest *hr;
 
     while (!stop) {
         rcount = recv(fd, buffer, buflen, flags);
@@ -107,15 +80,56 @@ int server_receive_message(int fd, char * buffer, size_t buflen) {
                 continue;
             else {
                 fprintf(stderr, "Error receiving message from client\n");
-                return -1;
+                return NULL;
             }
         }
         total_received += rcount;
+        hr = try_parse_http_request(buffer);
+        if (hr)
+            stop = true;
     }
-    return 0;
+    buffer[total_received] = '\0';
+    return hr;
 }
 
-void server_register_path_handler(const char *path, void (*handler)(const char *)) {
+HttpResponse *server_handle_request(HttpRequest *hr) {
+    const char *html = NULL;
+    for (size_t i = 0; i < handler_count; i++) {
+        if (!strcmp(handlers[i].path, hr->path)) {
+            html = handlers[i].handler(hr->path);
+            break;
+        }
+    }
+    if (html) {
+        char *reason = "OK";
+        HttpResponse *hrs = create_http_response("1.1", "200", reason);
+        http_response_add_body(hrs, html);
+        free((void *)html);
+        return hrs;
+    }
+    char *reason = "Not Implemented";
+    HttpResponse *hrs = create_http_response("1.1", "501", reason);
+    return hrs;
+}
+
+void server_send_response(int fd, const char *response) {
+        int buflen = strlen(response);
+        int sentlen = 0;
+        while (sentlen < buflen) {
+            int sent = send(fd, response, buflen, MSG_NOSIGNAL);
+            if (sent == -1) {
+                fprintf(stderr, "Error sending data\n");
+                perror("server");
+                fflush(stdout);
+                break;
+            }
+            sentlen += sent;
+            printf("sent total %i\n", sentlen);
+            fflush(stdout);
+        }
+}
+
+void server_register_path_handler(const char *path, const char *(*handler)(const char *)) {
     strcpy(handlers[handler_count].path, path);
     handlers[handler_count].handler = handler;
     handler_count++;
